@@ -31,6 +31,8 @@ typedef NS_ENUM(NSUInteger, AFHTTPRequestLoggerLevel) {
   AFLoggerLevelFatal = AFLoggerLevelOff,
 };
 
+typedef void(^AFLogger)(NSString *format);
+
 /**
  `AFNetworkActivityLogger` logs requests and responses made by AFNetworking, with an adjustable level of detail.
  
@@ -53,6 +55,8 @@ typedef NS_ENUM(NSUInteger, AFHTTPRequestLoggerLevel) {
  @discussion Each notification has an associated `NSURLRequest`. To filter out request and response logging, such as all network activity made to a particular domain, this predicate can be set to match against the appropriate URL string pattern.
  */
 @property (nonatomic, strong) NSPredicate *filterPredicate;
+
+@property (nonatomic, strong) AFLogger loggerBlock;
 
 /**
  Returns the shared logger instance.

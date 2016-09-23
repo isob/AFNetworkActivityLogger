@@ -21,20 +21,19 @@
 // THE SOFTWARE.
 
 #import "AFNetworkActivityLogger.h"
-#import "AFURLConnectionOperation.h"
 #import "AFURLSessionManager.h"
 
 #import <objc/runtime.h>
 
-static NSURLRequest * AFNetworkRequestFromNotification(NSNotification *notification) {
-    NSURLRequest *request = nil;
-    if ([[notification object] isKindOfClass:[AFURLConnectionOperation class]]) {
-        request = [(AFURLConnectionOperation *)[notification object] request];
-    } else if ([[notification object] respondsToSelector:@selector(originalRequest)]) {
-        request = [[notification object] originalRequest];
+static NSError * AFNetworkErrorFromNotification(NSNotification *notification) {
+    NSError *error = nil;
+    if ([[notification object] isKindOfClass:[NSURLSessionTask class]]) {
+        error = [(NSURLSessionTask *)[notification object] error];
+        if (!error) {
+            error = notification.userInfo[AFNetworkingTaskDidCompleteErrorKey];
+        }
     }
-
-    return request;
+    return error;
 }
 
 @implementation AFNetworkActivityLogger
@@ -67,9 +66,9 @@ static NSURLRequest * AFNetworkRequestFromNotification(NSNotification *notificat
 
 - (void)startLogging {
     [self stopLogging];
-
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(networkRequestDidStart:) name:AFNetworkingOperationDidStartNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(networkRequestDidFinish:) name:AFNetworkingOperationDidFinishNotification object:nil];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(networkRequestDidStart:) name:AFNetworkingTaskDidResumeNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(networkRequestDidFinish:) name:AFNetworkingTaskDidCompleteNotification object:nil];
 
 #if (defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000) || (defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 1090)
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(networkRequestDidStart:) name:AFNetworkingTaskDidResumeNotification object:nil];
@@ -97,16 +96,13 @@ static NSURLRequest * AFNetworkRequestFromNotification(NSNotification *notificat
 static void * AFNetworkRequestStartDate = &AFNetworkRequestStartDate;
 
 - (void)networkRequestDidStart:(NSNotification *)notification {
-    NSURLRequest *request = AFNetworkRequestFromNotification(notification);
-
+    NSURLSessionTask *task = [notification object];
+    NSURLRequest *request = task.originalRequest;
+    
     if (!request) {
         return;
     }
-
-    if (request && self.filterPredicate && [self.filterPredicate evaluateWithObject:request]) {
-        return;
-    }
-
+    
     objc_setAssociatedObject(notification.object, AFNetworkRequestStartDate, [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     NSString *body = nil;
@@ -127,9 +123,10 @@ static void * AFNetworkRequestStartDate = &AFNetworkRequestStartDate;
 }
 
 - (void)networkRequestDidFinish:(NSNotification *)notification {
-    NSURLRequest *request = AFNetworkRequestFromNotification(notification);
-    NSURLResponse *response = [notification.object response];
-    NSError *error = [notification.object error];
+    NSURLSessionTask *task = [notification object];
+    NSURLRequest *request = task.originalRequest;
+    NSURLResponse *response = task.response;
+    NSError *error = AFNetworkErrorFromNotification(notification);
 
     if (!request && !response) {
         return;
@@ -146,9 +143,9 @@ static void * AFNetworkRequestStartDate = &AFNetworkRequestStartDate;
         responseHeaderFields = [(NSHTTPURLResponse *)response allHeaderFields];
     }
 
-    NSString *responseString = nil;
-    if ([[notification object] respondsToSelector:@selector(responseString)]) {
-        responseString = [[notification object] responseString];
+    id responseObject = nil;
+    if (notification.userInfo) {
+        responseObject = notification.userInfo[AFNetworkingTaskDidCompleteSerializedResponseKey];
     }
 
     NSTimeInterval elapsedTime = [[NSDate date] timeIntervalSinceDate:objc_getAssociatedObject(notification.object, AFNetworkRequestStartDate)];
@@ -166,7 +163,7 @@ static void * AFNetworkRequestStartDate = &AFNetworkRequestStartDate;
     } else {
         switch (self.level) {
             case AFLoggerLevelDebug:
-                [self aflog:@"%ld '%@' [%.04f s]: %@ %@", (long)responseStatusCode, [[response URL] absoluteString], elapsedTime, responseHeaderFields, responseString];
+                [self aflog:@"%ld '%@' [%.04f s]: %@ %@", (long)responseStatusCode, [[response URL] absoluteString], elapsedTime, responseHeaderFields, responseObject];
                 break;
             case AFLoggerLevelInfo:
                 [self aflog:@"%ld '%@' [%.04f s]", (long)responseStatusCode, [[response URL] absoluteString], elapsedTime];
